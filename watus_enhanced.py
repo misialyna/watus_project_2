@@ -540,15 +540,36 @@ def cue_listen():
         _last_state_log_time = current_time
     led.listening()
 
+    # Publish state for UI synchronization
+    if 'bus' in globals():
+        try:
+            bus.publish_state("listening")
+        except:
+            pass
+
 
 def cue_think():
     log("[Watus][STATE] THINKING")
     led.processing_or_speaking()
 
+    # Publish state for UI synchronization
+    if 'bus' in globals():
+        try:
+            bus.publish_state("processing")
+        except:
+            pass
+
 
 def cue_speak():
     log("[Watus][STATE] SPEAKING")
     led.processing_or_speaking()
+
+    # Publish state for UI synchronization
+    if 'bus' in globals():
+        try:
+            bus.publish_state("speaking")
+        except:
+            pass
 
 
 def cue_idle():
@@ -588,6 +609,20 @@ class Bus:
                 log(f"[Perf] BUS: {int((time.time() - t0) * 1000)}ms")
         except Exception as e:
             logger.error(f"Failed to publish leader message: {e}", "ZMQ")
+
+    def publish_state(self, state: str, data: dict = None):
+        """Publish current watus state for real-time UI synchronization"""
+        try:
+            if data is None:
+                data = {}
+            message = {
+                "state": state,
+                "timestamp": time.time(),
+                **data
+            }
+            self.pub.send_multipart([b"watus.state", json.dumps(message, ensure_ascii=False).encode("utf-8")])
+        except Exception as e:
+            logger.error(f"Failed to publish state message: {e}", "ZMQ")
 
     def _sub_loop(self):
         while True:

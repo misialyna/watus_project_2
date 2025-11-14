@@ -198,32 +198,82 @@ OUT_DEV = _coerce_dev(OUT_DEV_ENV, want_output=True) or _auto_pick_output()
 # ===== ZMQ Bus =====
 class Bus:
     def __init__(self, pub_addr: str, sub_addr: str):
-        ctx = zmq.Context.instance()
-        self.pub = ctx.socket(zmq.PUB)
+        self.ctx = zmq.Context.instance()
+
+        # Create sockets
+        self.pub = self.ctx.socket(zmq.PUB)
         self.pub.setsockopt(zmq.SNDHWM, 100)
         self.pub.bind(pub_addr)
 
-        self.sub = ctx.socket(zmq.SUB)
+        self.sub = self.ctx.socket(zmq.SUB)
         self.sub.connect(sub_addr)
         self.sub.setsockopt_string(zmq.SUBSCRIBE, "tts.speak")
 
         self._sub_queue = queue.Queue()
-        threading.Thread(target=self._sub_loop, daemon=True).start()
+
+        # Track running state
+        self._running = True
+        self._sub_thread = threading.Thread(target=self._sub_loop, daemon=True)
+        self._sub_thread.start()
+
+        # Register cleanup
+        atexit.register(self._cleanup)
+
+    def _cleanup(self):
+        """Clean up ZMQ resources properly"""
+        try:
+            self._running = False
+
+            # Close sockets first
+            if hasattr(self, 'pub') and self.pub:
+                try:
+                    self.pub.close()
+                except:
+                    pass
+
+            if hasattr(self, 'sub') and self.sub:
+                try:
+                    self.sub.close()
+                except:
+                    pass
+
+            # Note: Don't close context - it's singleton and may be used by other parts
+
+        except Exception as e:
+            print(f"[Watus][BUS] Cleanup error: {e}", file=sys.stderr)
 
     def publish_leader(self, payload: dict):
-        t0 = time.time()
-        self.pub.send_multipart([b"dialog.leader", json.dumps(payload, ensure_ascii=False).encode("utf-8")])
-        log(f"[Perf] BUS_ms={int((time.time() - t0) * 1000)}")
+        try:
+            t0 = time.time()
+            self.pub.send_multipart([b"dialog.leader", json.dumps(payload, ensure_ascii=False).encode("utf-8")])
+            log(f"[Perf] BUS_ms={int((time.time() - t0) * 1000)}")
+        except Exception as e:
+            log(f"[Watus][BUS] Publish leader error: {e}")
+
+    def publish_state(self, state: str, data: dict = None):
+        """Publish current watus state for real-time UI synchronization"""
+        try:
+            if data is None:
+                data = {}
+            message = {
+                "state": state,
+                "timestamp": time.time(),
+                **data
+            }
+            self.pub.send_multipart([b"watus.state", json.dumps(message, ensure_ascii=False).encode("utf-8")])
+        except Exception as e:
+            log(f"[Watus] Failed to publish state message: {e}")
 
     def _sub_loop(self):
-        while True:
+        while self._running:
             try:
                 topic, payload = self.sub.recv_multipart()
                 if topic != b"tts.speak": continue
                 data = json.loads(payload.decode("utf-8", "ignore"))
                 self._sub_queue.put(data)
-            except Exception:
-                time.sleep(0.01)
+            except Exception as e:
+                if self._running:  # Only log errors if still running
+                    time.sleep(0.01)
 
     def get_tts(self, timeout=0.1):
         try:
@@ -269,20 +319,44 @@ def cue_listen():
     log("[Watus][STATE] LISTENING")
     led.listening()
 
+    # Publikuj stan dla synchronizacji UI
+    if 'bus' in globals():
+        try:
+            bus.publish_state("listening")
+        except:
+            pass
+
 
 def cue_think():
     log("[Watus][STATE] THINKING")
     led.processing_or_speaking()
+
+    # Publikuj stan dla synchronizacji UI
+    if 'bus' in globals():
+        try:
+            bus.publish_state("processing")
+        except:
+            pass
 
 
 def cue_speak():
     log("[Watus][STATE] SPEAKING")
     led.processing_or_speaking()
 
+    # Publikuj stan dla synchronizacji UI
+    if 'bus' in globals():
+        try:
+            bus.publish_state("speaking")
+        except:
+            pass
+
 
 def cue_idle():
     log("[Watus][STATE] IDLE")
     led.processing_or_speaking()
+
+
+# Dodaj metodę publish_state do klasy Bus
 
 
 # ===== Weryfikator (ECAPA) =====
