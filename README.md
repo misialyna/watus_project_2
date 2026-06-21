@@ -1,3 +1,7 @@
+> **This repository is an archived snapshot.**
+> It represents an earlier iteration of WATUS (AIWAT) and is preserved for reference.
+> The current version is under active development and will be made public on release.
+
 # WATUS – Voice Frontend (Watus + Reporter)
 
 Low-latency voice frontend z rozpoznawaniem lidera (ECAPA / SpeechBrain), transkrypcją (Whisper via Faster-Whisper),
